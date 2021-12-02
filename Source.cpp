@@ -5,49 +5,38 @@ using namespace std;
 #include <limits>
 #include <vector>
 #include <string>
+#include <list>
+#include <chrono>
 
 #include <fstream>
 #include <math.h>
 double get_distance_y(const Particle& A, const Particle& B) {
-	double dx = abs(B.x - A.x);
+	double dx = B.x - A.x;
+	if (dx < 0) dx += L;
+	if (dx > L / 2) dx = L - dx;
 
 	double dy = B.y - A.y;
 	if (dy < 0) dy += L;
 
-	 // check if particle is reachable
-	if (dx > 2 * r) return numeric_limits<double>::max();
-	return dy - sqrt(4 * r * r - dx * dx);
+	// check if particle is reachable
+	if (dx >= 2 * r) return numeric_limits<double>::max();
+	double result = dy - sqrt(4 * r * r - dx * dx);
+	return result;
 }
 double get_distance_x(const Particle& A, const Particle& B) {
-	double dy = abs(B.y - A.y);
+	double dy = B.y - A.y;
+	if (dy < 0) dy += L;
+	if (dy > L / 2) dy = L - dy;
 
 	double dx = B.x - A.x;
 	if (dx < 0) dx += L;
-	
+
 	// check if particle is reachable
-	if (dy > 2 * r) return numeric_limits<double>::max();
-	
-	return dx - sqrt(4 * r * r - dy * dy);
+	if (dy >= 2 * r) return numeric_limits<double>::max();
+	double result = dx - sqrt(4 * r * r - dy * dy);
+	return result;
 }
-void update_nearest(array<Particle, N>& A)
-{
-	for (int i = 0; i != N; i++)
-	{
-		std::sort(A[i].y_nearest_indeces.begin(), A[i].y_nearest_indeces.end(),
-			[i, A](int lhs, int rhs)
-			{
-				return get_distance_y(A[i], A[lhs]) < get_distance_y(A[i], A[rhs]);
-			}
-		);
-		std::sort(A[i].x_nearest_indeces.begin(), A[i].x_nearest_indeces.end(),
-			[i, A](int lhs, int rhs)
-			{
-				return get_distance_x(A[i], A[lhs]) < get_distance_x(A[i], A[rhs]);
-			}
-		);
-	}
-}
-void creating_field(array<Particle, N>& p) {
+void creating_field(vector<Particle>& p) {
 	int floor = 0, index = 0;
 	for (double j = r; j < L; j += (2 * r + ds)) {
 		for (double i = r; i < L; i += (2 * r + ds)) {
@@ -57,36 +46,6 @@ void creating_field(array<Particle, N>& p) {
 		}
 		floor++;
 	}
-
-	// init nearest
-	for (int i = 0; i != N; i++)
-	{
-		Particle* a = &p[i];
-		a->index = i;
-		bool magic_flag = false;
-		for (int j = 0; j != N; j++)
-		{
-			if (magic_flag)
-			{
-				a->x_nearest_indeces[j - 1] = j;
-				a->y_nearest_indeces[j - 1] = j;
-			}
-			else
-			{
-				if (j == i)
-				{
-					magic_flag = true;
-					continue;
-				}
-				a->x_nearest_indeces[j] = j;
-				a->y_nearest_indeces[j] = j;
-			}
-
-		}
-	}
-
-	// update nearest
-	update_nearest(p);
 }
 void collision(bool dir, Particle* A, double delta) {
 	if (dir)
@@ -100,20 +59,10 @@ void collision(bool dir, Particle* A, double delta) {
 		if (A->x >= L) A->x -= L;
 	}
 }
-bool end_of_onechain(double distance) {
-	if (distance < sqrt(N) * 2 * r)
-		return 0;
-	else
-		return 1;
-}
 bool is_reachable(const Particle& a, const Particle& b, bool dir)
 {
 	if (dir) return get_distance_y(a, b) != numeric_limits<double>::max();
 	else return get_distance_x(a, b) != numeric_limits<double>::max();
-}
-Particle* get_right_nearest(array<Particle, N>& A, Particle* a, bool direction) {
-	if (direction) return &A[a->y_nearest_indeces[0]];
-	else return &A[a->x_nearest_indeces[0]];
 }
 void change_position(Particle* A, double distance, bool direction) { //перемещение частицы А
 	//используется, когда оставшееся расстояние для частицы в цикле в OneChain меньше
@@ -129,8 +78,45 @@ void change_position(Particle* A, double distance, bool direction) { //перемещен
 			A->y -= L;
 	}
 }
+Particle* collide_y(Particle* a, vector<Particle>& A, double& distance)
+{
+	list<Particle*> reachable_particles;
+	for (size_t i = 0; i != N; i++)
+		if (&A[i] != a && abs(a->x - A[i].x) < 2 * r)
+			reachable_particles.push_back(&A[i]);
+	if (reachable_particles.empty()) return a;
+
+	reachable_particles.sort([a](Particle* lhs, Particle* rhs)
+		{ return get_distance_y(*a, *lhs) < get_distance_y(*a, *rhs); }
+	);
+
+	Particle* b = reachable_particles.front();
+	double delta = get_distance_y(*a, *b);
+	collision(true, a, delta);
+	distance += delta;
+	return b;
+}
+Particle* collide_x(Particle* a, vector<Particle>& A, double& distance)
+{
+	list<Particle*> reachable_particles;
+	for (size_t i = 0; i != N; i++)
+		if (&A[i] != a && abs(a->y - A[i].y) < 2 * r)
+			reachable_particles.push_back(&A[i]);
+	if (reachable_particles.empty()) return a;
+
+	reachable_particles.sort([a](Particle* lhs, Particle* rhs)
+		{ return get_distance_x(*a, *lhs) < get_distance_x(*a, *rhs); }
+	);
+
+	Particle* b = reachable_particles.front();
+	double delta = get_distance_x(*a, *b);
+	collision(false, a, delta);
+	distance += delta;
+	return b;
+}
 ofstream out("particles.txt", ios::out); // открываем файл для записи
-void recording(array<Particle, N>& A, ofstream& out) {
+size_t num_recordings = 0;
+void recording(vector<Particle>& A, ofstream& out) {
 	if (out.is_open()) {
 		for (int i = 0; i < N; i++) {
 			out << A[i].x;
@@ -143,39 +129,28 @@ void recording(array<Particle, N>& A, ofstream& out) {
 			else out << endl;
 		}
 	}
+	num_recordings++;
 }
-void OneChain(array<Particle, N>& A, int index = 0) { //dir - direction: 0 - right, 1 - up
+void OneChain(vector<Particle>& A, int index = 0) { //dir - direction: 0 - right, 1 - up
 													   //index - index of start particle, =0
 	double distance = 0; //сколько всего пройдено
-	bool direction;
-	double delta = 0.0;
-	direction = rand() % 2;
+	bool direction = rand() % 2;
 	Particle* a = &A[index];
-	Particle* B;
-	while (end_of_onechain(distance) == 0) {
-		B = get_right_nearest(A, a, direction);
-		if (direction) delta = get_distance_y(*a, *B);
-		else delta = get_distance_x(*a, *B);
-
-		if (distance + delta > sqrt(N) * 2 * r) {
-			change_position(a, sqrt(N) * 2 * r - distance, direction);
-			break;
-		}
-		if (delta < 0.01) break;
-		collision(direction, a, delta);
-		distance += delta;
-		update_nearest(A);
-		a = B;
-		recording(A, out);
+	while (distance < MAX_ONECHAIN_DISTANCE) {
+		double old_distance = distance;
+		if (direction) a = collide_y(a, A, distance);
+		else a = collide_x(a, A, distance);
+		//recording(A, out);
+		if (abs(old_distance - distance) < 10e-2) break;
 	}
 
 }
-vector<double> rad_func(const array<Particle, N>& p)
+vector<double> rad_func(const vector<Particle>& p)
 {
 	//histo
 	vector<int> hist;
-	double dr = 0.01*r;
-	for (double d = 0; d <= 0.1; d += dr/r)
+	double dr = 0.01 * r;
+	for (double d = 0; d <= 0.1; d += dr / r)
 	{
 		hist.push_back(0);
 		for (int i = 0; i < N - 1; i++)
@@ -184,16 +159,20 @@ vector<double> rad_func(const array<Particle, N>& p)
 			{
 				/* double dx = p[j].x - p[i].x;
 				double dy = p[j].y - p[i].y; */
-				if (get_distance_y(p[i], p[j]) * get_distance_y(p[i], p[j]) + get_distance_x(p[i], p[j]) * get_distance_x(p[i], p[j]) <= pow(d * r + dr/ 2, 2))
+				if (pow(p[j].x - p[i].x,2) + pow(p[j].y - p[i].y, 2) <= pow((2 * r + d * r) + 0.005, 2))
 				{
-					if (get_distance_y(p[i], p[j]) * get_distance_y(p[i], p[j]) + get_distance_x(p[i], p[j]) * get_distance_x(p[i], p[j]) >= pow(d * r - dr / 2, 2))
+					if (pow(p[j].x - p[i].x, 2) + (pow(p[j].y - p[i].y, 2) >= pow((2 * r + d * r) - 0.005 , 2)))
 						hist[d * 100]++;
 				}
 			}
 		}
 	}
 
-	
+	for (int j = 0; j < 11; j++)
+	{
+		cout << 2 + 0.01 * j << ": " << hist[j] << "\n";
+	}
+	cout << "\n";
 	//g
 	vector<double> g(11);
 	for (int j = 0; j < 11; j++)
@@ -213,41 +192,39 @@ double avarage(const vector<double>& g)
 }
 
 int main() {
-	setlocale(LC_ALL, "Russian");
-
-	array<Particle, N> p;
+	vector<Particle> p(N);
 	creating_field(p);
 	recording(p, out);
 
 	//цикл OneChain-ов с записью положений всех частиц 
 	size_t iter_num = 0;
 	vector<double> g;
+	auto begin_time = chrono::system_clock::now();
 	do
 	{
 		int index = rand() % N;
 		OneChain(p, index);
-		g = rad_func(p);
 
+		/*
+		g = rad_func(p);
 		cout << "g = ";
 		for (auto i : g)
 			cout << to_string(i) << " ";
 		cout << endl;
+		*/
 		recording(p, out);
-		
-	} while (iter_num++ != 10 || avarage(g) > 10.0);
+		cout << "Iteration " << iter_num << " ended" << endl;
 
+	} while (iter_num++ != 30 || avarage(g) > 10.0);
+	g = rad_func(p);
+	cout << "g : \n";
+	for (int i = 0; i < 11; i++)
+		cout << 2 + 0.01 * i << ":     " << g[i] << " \n";
+	cout << endl;
+	chrono::duration<double> elapsed = chrono::system_clock::now() - begin_time;
+	std::cout << "Main loop time: " << elapsed.count() << std::endl;
+	std::cout << "Number of recordings: " << num_recordings << std::endl;
 	out.close();
 	return 0;
 }
 
-/*
-1. Создаем поле частиц. Частицы располагаются в правильном (шахматном) порядке, между рядами зазоры в ds.
-2. *Определяем ближайших*
-3. OneChain:
-	for(...){
-		выбираем направление вверх/вправо,
-		находим ближайшую в этом направлении (перебор ближайших по условиям расстояния центров),
-		толкаем частицу и перемещаем её в точку столкновения с ближайшей
-		перемещаем флажок
-	}
-*/
